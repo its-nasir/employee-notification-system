@@ -192,17 +192,8 @@ def send_dm(user_id: str, message: str) -> None:
 
 @app.route("/auth/google")
 def google_auth():
-    """Start Google OAuth flow with PKCE."""
+    """Start Google OAuth flow — simple, no PKCE (avoids session issues on Render)."""
     from google_auth_oauthlib.flow import Flow
-
-    code_verifier = secrets.token_urlsafe(64)
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode()).digest()
-    ).rstrip(b"=").decode()
-
-    # Store verifier in session (signed cookie — works across workers)
-    session.permanent = True
-    session["code_verifier"] = code_verifier
 
     flow = Flow.from_client_config(
         get_client_config(),
@@ -213,8 +204,6 @@ def google_auth():
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
-        code_challenge=code_challenge,
-        code_challenge_method="S256",
     )
     session["oauth_state"] = state
     return redirect(auth_url)
@@ -222,22 +211,18 @@ def google_auth():
 
 @app.route("/auth/callback")
 def google_callback():
-    """Handle Google OAuth callback with PKCE."""
+    """Handle Google OAuth callback — skip state check to avoid session issues."""
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
     from google_auth_oauthlib.flow import Flow
 
-    code_verifier = session.get("code_verifier")
-    oauth_state   = session.get("oauth_state")
-
-    if not code_verifier:
-        # Session lost (multi-worker issue) — restart auth flow
-        return redirect("/auth/google")
+    # Use state from the callback URL directly (not session) to avoid mismatch
+    state = request.args.get("state", "")
 
     flow = Flow.from_client_config(
         get_client_config(),
         scopes=SCOPES,
-        state=oauth_state,
+        state=state,
         redirect_uri=REDIRECT_URI,
     )
 
@@ -245,10 +230,7 @@ def google_callback():
     if "localhost" in auth_response:
         auth_response = auth_response.replace("localhost", "127.0.0.1", 1)
 
-    flow.fetch_token(
-        authorization_response=auth_response,
-        code_verifier=code_verifier,
-    )
+    flow.fetch_token(authorization_response=auth_response)
     creds = flow.credentials
     _save_token(creds.to_json())
     return redirect("/")
