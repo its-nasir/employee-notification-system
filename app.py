@@ -216,33 +216,40 @@ def google_callback():
 
     from google_auth_oauthlib.flow import Flow
 
+    # If already authenticated, skip
+    if get_google_creds():
+        return redirect("/")
+
     state = request.args.get("state", "")
+    code  = request.args.get("code", "")
 
-    # Debug: log what URLs we're working with
-    actual_url = request.url
-    print(f"DEBUG callback - request.url: {actual_url}")
-    print(f"DEBUG REDIRECT_URI: {REDIRECT_URI}")
+    if not code:
+        return redirect("/auth/google")
 
-    flow = Flow.from_client_config(
-        get_client_config(),
-        scopes=SCOPES,
-        state=state,
-        redirect_uri=REDIRECT_URI,
-    )
-
-    # Force https if Render (production)
-    auth_response = actual_url
-    if "onrender.com" in REDIRECT_URI and auth_response.startswith("http://"):
-        auth_response = auth_response.replace("http://", "https://", 1)
-    elif "localhost" in auth_response:
-        auth_response = auth_response.replace("localhost", "127.0.0.1", 1)
-
-    print(f"DEBUG auth_response: {auth_response}")
-
-    flow.fetch_token(authorization_response=auth_response)
-    creds = flow.credentials
-    _save_token(creds.to_json())
-    return redirect("/")
+    try:
+        flow = Flow.from_client_config(
+            get_client_config(),
+            scopes=SCOPES,
+            state=state,
+            redirect_uri=REDIRECT_URI,
+        )
+        flow.fetch_token(authorization_response=request.url)
+        creds = flow.credentials
+        _save_token(creds.to_json())
+        return redirect("/")
+    except Exception as exc:
+        error_msg = str(exc)
+        print(f"OAuth error: {error_msg}")
+        # If invalid_grant, token may already be saved — check
+        if get_google_creds():
+            return redirect("/")
+        return f"""
+        <html><body style="font-family:sans-serif;padding:40px">
+        <h2>⚠️ Google Login Failed</h2>
+        <p>Error: {error_msg}</p>
+        <p>Please <a href="/auth/google">try again</a>.</p>
+        </body></html>
+        """, 400
 
 
 @app.route("/api/auth/status")
