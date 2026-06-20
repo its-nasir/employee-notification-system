@@ -200,6 +200,8 @@ def google_auth():
         hashlib.sha256(code_verifier.encode()).digest()
     ).rstrip(b"=").decode()
 
+    # Store verifier in session (signed cookie — works across workers)
+    session.permanent = True
     session["code_verifier"] = code_verifier
 
     flow = Flow.from_client_config(
@@ -225,21 +227,27 @@ def google_callback():
 
     from google_auth_oauthlib.flow import Flow
 
+    code_verifier = session.get("code_verifier")
+    oauth_state   = session.get("oauth_state")
+
+    if not code_verifier:
+        # Session lost (multi-worker issue) — restart auth flow
+        return redirect("/auth/google")
+
     flow = Flow.from_client_config(
         get_client_config(),
         scopes=SCOPES,
-        state=session.get("oauth_state"),
+        state=oauth_state,
         redirect_uri=REDIRECT_URI,
     )
 
     auth_response = request.url
-    # Fix localhost vs 127.0.0.1 mismatch
     if "localhost" in auth_response:
         auth_response = auth_response.replace("localhost", "127.0.0.1", 1)
 
     flow.fetch_token(
         authorization_response=auth_response,
-        code_verifier=session.get("code_verifier"),
+        code_verifier=code_verifier,
     )
     creds = flow.credentials
     _save_token(creds.to_json())

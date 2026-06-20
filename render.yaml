@@ -3,7 +3,7 @@ services:
     name: manager-notification-system
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn app:app --workers 1 --timeout 120
     envVars:
       - key: USER_TOKEN
         sync: false
