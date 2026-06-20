@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 venv/
 service-account*.json
+google-oauth-client.json
+token.json

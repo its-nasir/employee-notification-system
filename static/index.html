@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Manager Notification System</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    header {
+      background: linear-gradient(135deg, #4A154B, #7B3F9E);
+      color: white;
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    header h1 span { font-size: 26px; }
+
+    .container {
+      max-width: 1100px;
+      margin: 32px auto;
+      padding: 0 20px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .card-header h2 {
+      font-size: 17px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 9px 18px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    .btn-primary   { background: #4A154B; color: white; }
+    .btn-primary:hover:not(:disabled)   { background: #3a0f3b; }
+
+    .btn-success   { background: #2eb67d; color: white; }
+    .btn-success:hover:not(:disabled)   { background: #25a06c; }
+
+    .btn-warning   { background: #f0a500; color: white; }
+    .btn-warning:hover:not(:disabled)   { background: #d4920a; }
+
+    .btn-danger    { background: #e01e5a; color: white; }
+    .btn-danger:hover:not(:disabled)    { background: #c01a4f; }
+
+    .btn-secondary { background: #f4f4f4; color: #444; border: 1px solid #ddd; }
+    .btn-secondary:hover:not(:disabled) { background: #e8e8e8; }
+
+    .btn-sm { padding: 5px 12px; font-size: 13px; }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    thead tr { background: #f8f8fb; }
+
+    th {
+      padding: 12px 16px;
+      text-align: left;
+      font-weight: 600;
+      color: #666;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 2px solid #eee;
+    }
+
+    td {
+      padding: 13px 16px;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: middle;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafafa; }
+
+    td input {
+      width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 14px;
+      outline: none;
+      transition: border 0.2s;
+    }
+
+    td input:focus { border-color: #4A154B; }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 48px 20px;
+      color: #999;
+    }
+
+    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+
+    /* Send button */
+    .send-section {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .btn-send {
+      background: linear-gradient(135deg, #4A154B, #7B3F9E);
+      color: white;
+      padding: 12px 28px;
+      font-size: 15px;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(74,21,75,0.3);
+    }
+
+    .btn-send:hover:not(:disabled) {
+      box-shadow: 0 6px 16px rgba(74,21,75,0.4);
+      transform: translateY(-1px);
+    }
+
+    /* Status log */
+    #log-box {
+      background: #0d1117;
+      border-radius: 10px;
+      padding: 16px;
+      max-height: 320px;
+      overflow-y: auto;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+    }
+
+    .log-empty {
+      color: #555;
+      text-align: center;
+      padding: 24px;
+    }
+
+    .log-line {
+      padding: 4px 0;
+      line-height: 1.6;
+      border-bottom: 1px solid #1e2530;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .log-line:last-child { border-bottom: none; }
+
+    .log-line .ts {
+      color: #555;
+      font-size: 11px;
+      white-space: nowrap;
+      margin-top: 2px;
+    }
+
+    .log-success { color: #2eb67d; }
+    .log-error   { color: #e01e5a; }
+    .log-warning { color: #f0a500; }
+    .log-info    { color: #61c7f2; }
+
+    /* Stats bar */
+    .stats-bar {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .stat-box {
+      background: #f8f8fb;
+      border-radius: 8px;
+      padding: 12px 20px;
+      text-align: center;
+      min-width: 90px;
+    }
+
+    .stat-box .val {
+      font-size: 26px;
+      font-weight: 700;
+    }
+
+    .stat-box .lbl {
+      font-size: 11px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .val-sent    { color: #2eb67d; }
+    .val-skipped { color: #f0a500; }
+    .val-failed  { color: #e01e5a; }
+    .val-total   { color: #4A154B; }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.active { display: flex; }
+
+    .modal {
+      background: white;
+      border-radius: 14px;
+      padding: 28px;
+      width: 440px;
+      max-width: 95vw;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    }
+
+    .modal h3 { font-size: 18px; margin-bottom: 20px; }
+
+    .form-group { margin-bottom: 16px; }
+
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #555;
+      margin-bottom: 6px;
+    }
+
+    .form-group input, .form-group textarea {
+      width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 14px;
+      outline: none;
+      transition: border 0.2s;
+      font-family: inherit;
+    }
+
+    .form-group input:focus,
+    .form-group textarea:focus { border-color: #4A154B; }
+
+    .form-group textarea { resize: vertical; min-height: 80px; }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1a1a2e;
+      color: white;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+      z-index: 999;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.3s;
+    }
+
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.success { border-left: 4px solid #2eb67d; }
+    .toast.error   { border-left: 4px solid #e01e5a; }
+
+    /* Auth banner */
+    .auth-banner {
+      background: #fff8e1;
+      border: 1px solid #f0c040;
+      border-radius: 10px;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .auth-banner.hidden { display: none; }
+    .auth-banner p { font-size: 14px; color: #7a5c00; }
+    .btn-google {
+      background: white;
+      color: #444;
+      border: 1px solid #ddd;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+    .btn-google:hover { background: #f5f5f5; }
+    .auth-ok { background: #e8f5e9; border-color: #81c784; }
+    .auth-ok p { color: #2e7d32; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1><span>💬</span> Manager Notification System</h1>
+  <span style="font-size:13px; opacity:0.8;">Slack DM Sender</span>
+</header>
+
+<div class="container">
+
+  <!-- Google Auth Banner -->
+  <div class="auth-banner" id="auth-banner">
+    <p>⚠️ <strong>Google Sheet write access needed</strong> — Login karo taaki Add / Edit / Delete kaam kare.</p>
+    <a href="/auth/google" class="btn-google">
+      <img src="https://www.google.com/favicon.ico" width="16" height="16" /> Connect Google Account
+    </a>
+  </div>
+
+  <!-- Managers Table Card -->
+  <div class="card">
+    <div class="card-header">
+      <h2>📋 Managers</h2>
+      <div class="actions">
+        <button class="btn-secondary" onclick="loadMentors()">🔄 Refresh</button>
+        <button class="btn-primary" onclick="openAddModal()">+ Add Manager</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Manager Name</th>
+            <th>Email</th>
+            <th>Title / Message</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="mentor-tbody">
+          <tr>
+            <td colspan="5">
+              <div class="empty-state">
+                <div class="icon">⏳</div>
+                <div>Loading mentors...</div>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Send Notifications Card -->
+  <div class="card">
+    <div class="card-header">
+      <h2>🚀 Send Notifications</h2>
+    </div>
+
+    <div class="send-section" style="margin-bottom: 20px;">
+      <button class="btn-send" id="send-btn" onclick="sendNotifications()">
+        <span>📤</span> Send DMs to All Managers
+      </button>
+      <div class="stats-bar" id="stats-bar" style="display:none;">
+        <div class="stat-box"><div class="val val-total" id="stat-total">0</div><div class="lbl">Total</div></div>
+        <div class="stat-box"><div class="val val-sent" id="stat-sent">0</div><div class="lbl">Sent</div></div>
+        <div class="stat-box"><div class="val val-skipped" id="stat-skipped">0</div><div class="lbl">Skipped</div></div>
+        <div class="stat-box"><div class="val val-failed" id="stat-failed">0</div><div class="lbl">Failed</div></div>
+      </div>
+    </div>
+
+    <!-- Status Log -->
+    <h2 style="font-size:15px; font-weight:600; margin-bottom:12px;">📝 Status Log</h2>
+    <div id="log-box">
+      <div class="log-empty">Run "Send DMs" to see live status...</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <h3 id="modal-title">Add Manager</h3>
+    <input type="hidden" id="modal-row-id" />
+    <div class="form-group">
+      <label>Manager Name</label>
+      <input type="text" id="modal-name" placeholder="e.g. Nasir Ahmed" />
+    </div>
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" id="modal-email" placeholder="e.g. nasir@navgurukul.org" />
+    </div>
+    <div class="form-group">
+      <label>Title / Message</label>
+      <textarea id="modal-title-msg" placeholder="Message that will be sent as DM..."></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" id="modal-save-btn" onclick="saveMentor()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+  let mentors = [];
+  let editingId = null;
+
+  // ── Load mentors ────────────────────────────────────────────────────────────
+  async function loadMentors() {
+    const tbody = document.getElementById('mentor-tbody');
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="icon">⏳</div><div>Loading...</div></div></td></tr>`;
+
+    try {
+      const res = await fetch('/api/mentors');
+      const data = await res.json();
+
+      if (!data.ok) throw new Error(data.error);
+      mentors = data.mentors;
+      renderTable();
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state" style="color:#e01e5a"><div class="icon">❌</div><div>${e.message}</div></div></td></tr>`;
+    }
+  }
+
+  function renderTable() {
+    const tbody = document.getElementById('mentor-tbody');
+    if (!mentors.length) {
+      tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="icon">📭</div><div>No mentors found. Add one!</div></div></td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = mentors.map((m, i) => `
+      <tr>
+        <td><span style="color:#999; font-size:13px">${i + 1}</span></td>
+        <td><strong>${esc(m.name) || '<span style="color:#bbb">—</span>'}</strong></td>
+        <td><span style="color:#4A154B">${esc(m.email)}</span></td>
+        <td style="max-width:280px; color:#555">${esc(m.title) || '<span style="color:#bbb">No message</span>'}</td>
+        <td>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-warning btn-sm" onclick="openEditModal(${m.id})">✏️ Edit</button>
+            <button class="btn-danger btn-sm" onclick="deleteMentor(${m.id}, '${esc(m.name)}')">🗑️ Delete</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  // ── Modal ───────────────────────────────────────────────────────────────────
+  function openAddModal() {
+    editingId = null;
+    document.getElementById('modal-title').textContent = '➕ Add Manager';
+    document.getElementById('modal-row-id').value = '';
+    document.getElementById('modal-name').value = '';
+    document.getElementById('modal-email').value = '';
+    document.getElementById('modal-title-msg').value = '';
+    document.getElementById('modal-save-btn').textContent = 'Add';
+    document.getElementById('modal-overlay').classList.add('active');
+    document.getElementById('modal-name').focus();
+  }
+
+  function openEditModal(id) {
+    const mentor = mentors.find(m => m.id === id);
+    if (!mentor) return;
+    editingId = id;
+    document.getElementById('modal-title').textContent = '✏️ Edit Manager';
+    document.getElementById('modal-row-id').value = id;
+    document.getElementById('modal-name').value = mentor.name;
+    document.getElementById('modal-email').value = mentor.email;
+    document.getElementById('modal-title-msg').value = mentor.title;
+    document.getElementById('modal-save-btn').textContent = 'Update';
+    document.getElementById('modal-overlay').classList.add('active');
+    document.getElementById('modal-name').focus();
+  }
+
+  function closeModal() {
+    document.getElementById('modal-overlay').classList.remove('active');
+  }
+
+  async function saveMentor() {
+    const name  = document.getElementById('modal-name').value.trim();
+    const email = document.getElementById('modal-email').value.trim();
+    const title = document.getElementById('modal-title-msg').value.trim();
+
+    if (!email) { showToast('Email is required', 'error'); return; }
+
+    const btn = document.getElementById('modal-save-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Saving...';
+
+    try {
+      let res, data;
+      if (editingId) {
+        res = await fetch(`/api/mentors/${editingId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, title }),
+        });
+      } else {
+        res = await fetch('/api/mentors', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, title }),
+        });
+      }
+
+      data = await res.json();
+      if (!data.ok) {
+        if (data.error === 'NOT_AUTHED') {
+          if (confirm('Google account connected nahi hai. Abhi connect karein?')) {
+            window.location.href = '/auth/google';
+          }
+          return;
+        }
+        throw new Error(data.error);
+      }
+
+      showToast(editingId ? 'Manager updated ✅' : 'Manager added ✅', 'success');
+      closeModal();
+      loadMentors();
+    } catch (e) {
+      showToast('Error: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = editingId ? 'Update' : 'Add';
+    }
+  }
+
+  async function deleteMentor(id, name) {
+    if (!confirm(`Delete "${name}"?`)) return;
+    try {
+      const res = await fetch(`/api/mentors/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      showToast('Manager deleted', 'success');
+      loadMentors();
+    } catch (e) {
+      showToast('Error: ' + e.message, 'error');
+    }
+  }
+
+  // ── Send notifications ──────────────────────────────────────────────────────
+  async function sendNotifications() {
+    const btn = document.getElementById('send-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Sending...';
+
+    const logBox = document.getElementById('log-box');
+    logBox.innerHTML = '';
+    document.getElementById('stats-bar').style.display = 'none';
+
+    addLog('🚀 Starting notification send...', 'info');
+
+    try {
+      const res = await fetch('/api/send', { method: 'POST' });
+      const data = await res.json();
+
+      if (!data.ok && !data.logs) throw new Error(data.error);
+
+      // Render logs
+      (data.logs || []).forEach(l => addLog(l.message, l.status));
+
+      // Stats
+      const total = (data.sent || 0) + (data.skipped || 0) + (data.failed?.length || 0);
+      document.getElementById('stat-total').textContent   = total;
+      document.getElementById('stat-sent').textContent    = data.sent || 0;
+      document.getElementById('stat-skipped').textContent = data.skipped || 0;
+      document.getElementById('stat-failed').textContent  = data.failed?.length || 0;
+      document.getElementById('stats-bar').style.display  = 'flex';
+
+      const failCount = data.failed?.length || 0;
+      showToast(
+        failCount ? `Done — ${data.sent} sent, ${failCount} failed` : `✅ All ${data.sent} DMs sent!`,
+        failCount ? 'error' : 'success'
+      );
+    } catch (e) {
+      addLog('❌ ' + e.message, 'error');
+      showToast('Error: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<span>📤</span> Send DMs to All Managers';
+    }
+  }
+
+  function addLog(msg, status = 'info') {
+    const logBox = document.getElementById('log-box');
+    const emptyEl = logBox.querySelector('.log-empty');
+    if (emptyEl) emptyEl.remove();
+
+    const now = new Date().toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = `log-line log-${status}`;
+    div.innerHTML = `<span class="ts">${now}</span><span>${msg}</span>`;
+    logBox.appendChild(div);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+  function esc(str) {
+    return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  let toastTimer;
+  function showToast(msg, type = 'success') {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.className = `toast ${type} show`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 3500);
+  }
+
+  // Close modal on overlay click
+  document.getElementById('modal-overlay').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+  });
+
+  // ── Init ────────────────────────────────────────────────────────────────────
+  async function checkAuthStatus() {
+    const res = await fetch('/api/auth/status');
+    const data = await res.json();
+    const banner = document.getElementById('auth-banner');
+    if (data.authed) {
+      banner.classList.add('auth-ok');
+      banner.innerHTML = `
+        <p>✅ <strong>Google Account connected</strong> — Add / Edit / Delete sab kaam karega.</p>
+        <a href="/auth/logout" class="btn-google" style="border-color:#e57373; color:#c62828;">
+          🔓 Logout
+        </a>
+      `;
+    }
+  }
+
+  checkAuthStatus();
+  loadMentors();
+</script>
+</body>
+</html>
