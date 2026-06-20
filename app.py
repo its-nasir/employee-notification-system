@@ -261,7 +261,27 @@ def google_logout():
     return redirect("/")
 
 
-# ── API Routes ────────────────────────────────────────────────────────────────
+@app.route("/api/token/export")
+def export_token():
+    """
+    Returns current token JSON — copy this value and set as
+    GOOGLE_TOKEN env var on Render dashboard to persist login.
+    """
+    if TOKEN_FILE.exists():
+        token_data = TOKEN_FILE.read_text()
+        return jsonify({
+            "ok": True,
+            "instruction": "Copy 'GOOGLE_TOKEN' value below and paste it in Render → Environment → GOOGLE_TOKEN",
+            "GOOGLE_TOKEN": token_data,
+        })
+    env_token = os.environ.get("GOOGLE_TOKEN")
+    if env_token:
+        return jsonify({
+            "ok": True,
+            "instruction": "Token is already set via env var",
+            "GOOGLE_TOKEN": env_token,
+        })
+    return jsonify({"ok": False, "error": "Not authenticated yet. Login with Google first."}), 401
 
 @app.route("/")
 def index():
