@@ -355,21 +355,54 @@
     }
     .auth-banner.hidden { display: none; }
     .auth-banner p { font-size: 14px; color: #7a5c00; }
-    .btn-google {
-      background: white;
-      color: #444;
-      border: 1px solid #ddd;
-      padding: 8px 16px;
-      border-radius: 8px;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      white-space: nowrap;
-    }
-    .btn-google:hover { background: #f5f5f5; }
     .auth-ok { background: #e8f5e9; border-color: #81c784; }
     .auth-ok p { color: #2e7d32; }
+
+    /* Password modal overlay */
+    .pw-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    .pw-overlay.active { display: flex; }
+    .pw-box {
+      background: white;
+      border-radius: 14px;
+      padding: 32px;
+      width: 360px;
+      max-width: 95vw;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+      text-align: center;
+    }
+    .pw-box h3 { font-size: 20px; margin-bottom: 8px; }
+    .pw-box p  { font-size: 14px; color: #888; margin-bottom: 20px; }
+    .pw-box input {
+      width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 15px;
+      outline: none;
+      margin-bottom: 12px;
+      text-align: center;
+      letter-spacing: 2px;
+    }
+    .pw-box input:focus { border-color: #4A154B; }
+    .pw-error { color: #e01e5a; font-size: 13px; margin-bottom: 10px; min-height: 18px; }
+    .btn-unlock {
+      width: 100%;
+      background: linear-gradient(135deg, #4A154B, #7B3F9E);
+      color: white;
+      padding: 11px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .btn-unlock:hover:not(:disabled) { opacity: 0.9; }
   </style>
 </head>
 <body>
@@ -381,12 +414,10 @@
 
 <div class="container">
 
-  <!-- Google Auth Banner -->
+  <!-- Auth Banner -->
   <div class="auth-banner" id="auth-banner">
-    <p>⚠️ <strong>Google Sheet write access needed</strong> — Please login to enable Add / Edit / Delete.</p>
-    <a href="/auth/google" class="btn-google">
-      <img src="https://www.google.com/favicon.ico" width="16" height="16" /> Connect Google Account
-    </a>
+    <p>🔒 <strong>Write access locked</strong> — Enter password to enable Add / Edit / Delete.</p>
+    <button class="btn-secondary" onclick="openPasswordModal()">🔑 Enter Password</button>
   </div>
 
   <!-- Managers Table Card -->
@@ -449,6 +480,17 @@
     </div>
   </div>
 
+</div>
+
+<!-- Password Modal -->
+<div class="pw-overlay" id="pw-overlay">
+  <div class="pw-box">
+    <h3>🔐 Enter Password</h3>
+    <p>Enter admin password to enable write access</p>
+    <input type="password" id="pw-input" placeholder="••••••••" onkeydown="if(event.key==='Enter') submitPassword()" />
+    <div class="pw-error" id="pw-error"></div>
+    <button class="btn-unlock" id="pw-btn" onclick="submitPassword()">Unlock</button>
+  </div>
 </div>
 
 <!-- Add/Edit Modal -->
@@ -691,20 +733,88 @@
   });
 
   // ── Init ────────────────────────────────────────────────────────────────────
-  async function checkAuthStatus() {
-    const res = await fetch('/api/auth/status');
+  async function init() {
+    const res  = await fetch('/api/auth/status');
     const data = await res.json();
+    updateAuthBanner(data.authed);
+    loadMentors();
+  }
+
+  init();
+
+  // ── Auth ────────────────────────────────────────────────────────────────────
+  function openPasswordModal() {
+    document.getElementById('pw-overlay').classList.add('active');
+    document.getElementById('pw-input').value = '';
+    document.getElementById('pw-error').textContent = '';
+    setTimeout(() => document.getElementById('pw-input').focus(), 100);
+  }
+
+  function closePasswordModal() {
+    document.getElementById('pw-overlay').classList.remove('active');
+  }
+
+  async function submitPassword() {
+    const pw  = document.getElementById('pw-input').value;
+    const btn = document.getElementById('pw-btn');
+    const err = document.getElementById('pw-error');
+
+    if (!pw) { err.textContent = 'Please enter password'; return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>';
+
+    try {
+      const res  = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        closePasswordModal();
+        updateAuthBanner(true);
+        showToast('✅ Access granted', 'success');
+      } else {
+        err.textContent = '❌ Incorrect password';
+        document.getElementById('pw-input').value = '';
+        document.getElementById('pw-input').focus();
+      }
+    } catch (e) {
+      err.textContent = 'Error: ' + e.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Unlock';
+    }
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    updateAuthBanner(false);
+    showToast('Logged out', 'success');
+  }
+
+  function updateAuthBanner(authed) {
     const banner = document.getElementById('auth-banner');
-    if (data.authed) {
+    if (authed) {
       banner.classList.add('auth-ok');
       banner.innerHTML = `
-        <p>✅ <strong>Google Account connected</strong> — Add / Edit / Delete sab kaam karega.</p>
-        <a href="/auth/logout" class="btn-google" style="border-color:#e57373; color:#c62828;">
-          🔓 Logout
-        </a>
+        <p>✅ <strong>Write access enabled</strong> — Add / Edit / Delete are active.</p>
+        <button class="btn-secondary btn-sm" onclick="logout()" style="border-color:#e57373; color:#c62828;">🔓 Logout</button>
+      `;
+    } else {
+      banner.classList.remove('auth-ok');
+      banner.innerHTML = `
+        <p>� <strong>Write access locked</strong> — Enter password to enable Add / Edit / Delete.</p>
+        <button class="btn-secondary" onclick="openPasswordModal()">🔑 Enter Password</button>
       `;
     }
   }
+
+  // Close password modal on overlay click
+  document.getElementById('pw-overlay').addEventListener('click', function(e) {
+    if (e.target === this) closePasswordModal();
+  });
 
   checkAuthStatus();
   loadMentors();

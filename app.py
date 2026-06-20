@@ -2,21 +2,19 @@
 """
 Flask backend for Manager Notification UI.
 - Read sheet : public CSV (no auth)
-- Write sheet: Google OAuth 2.0 (browser login once, token saved)
+- Write sheet: gspread with Google Service Account OR simple password protection
 - Send DMs   : Slack user token
-- Deploy     : Render.com ready (credentials via env vars)
+- Auth       : Simple password (set ADMIN_PASSWORD in .env)
 """
 
 from __future__ import annotations
 
-import base64
 import csv
-import hashlib
 import io
 import json
 import os
-import secrets
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -30,111 +28,35 @@ except ImportError:
     pass
 
 app = Flask(__name__, static_folder="static")
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "fallback-secret-key-change-me")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SHEET_ID        = os.environ.get("GOOGLE_SHEET_ID", "1sXvJ_FS_2Wz--CZin3rcXFCIQaE_-24pvX0NzTYrDVc")
 SHEET_GID       = os.environ.get("SHEET_GID", "0")
 USER_TOKEN      = os.environ.get("USER_TOKEN", "")
 SUMMARY_CHANNEL = os.environ.get("SUMMARY_CHANNEL_ID", "C0BBY7CJRMY")
-CLIENT_ID       = os.environ.get("GOOGLE_CLIENT_ID", "")
-CLIENT_SECRET   = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-BASE_URL        = os.environ.get("BASE_URL", "http://127.0.0.1:5000")
-REDIRECT_URI    = f"{BASE_URL}/auth/callback"
-
-TOKEN_FILE = Path(__file__).resolve().parent / "token.json"
-
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.file",
-]
+ADMIN_PASSWORD  = os.environ.get("ADMIN_PASSWORD", "admin123")
 
 
-# ── Google client config (built from env vars) ────────────────────────────────
+# ── Auth helpers ──────────────────────────────────────────────────────────────
 
-def get_client_config() -> dict:
-    """Build OAuth client config from env vars (no JSON file needed in prod)."""
-    return {
-        "web": {
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "project_id": os.environ.get("GOOGLE_PROJECT_ID", ""),
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "redirect_uris": [REDIRECT_URI],
-        }
-    }
+def is_authenticated() -> bool:
+    return session.get("authenticated") is True
 
 
-# ── Google Auth helpers ───────────────────────────────────────────────────────
-
-def _token_data() -> dict | None:
-    """Read token from file (local) or env var GOOGLE_TOKEN (production)."""
-    # Production: token stored in env var
-    token_env = os.environ.get("GOOGLE_TOKEN")
-    if token_env:
-        try:
-            return json.loads(token_env)
-        except Exception:
-            return None
-    # Local: token stored in file
-    if TOKEN_FILE.exists():
-        try:
-            return json.loads(TOKEN_FILE.read_text())
-        except Exception:
-            return None
-    return None
+def require_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not is_authenticated():
+            return jsonify({"ok": False, "error": "NOT_AUTHED"}), 401
+        return f(*args, **kwargs)
+    return decorated
 
 
-def _save_token(creds_json: str) -> None:
-    """Save token to file locally (on Render, use env var instead)."""
-    TOKEN_FILE.write_text(creds_json)
-
-
-def get_google_creds():
-    """Return valid Google credentials, or None if not authed."""
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
-
-    data = _token_data()
-    if not data:
-        return None
-
-    creds = Credentials(
-        token=data.get("token"),
-        refresh_token=data.get("refresh_token"),
-        token_uri=data.get("token_uri", "https://oauth2.googleapis.com/token"),
-        client_id=data.get("client_id") or CLIENT_ID,
-        client_secret=data.get("client_secret") or CLIENT_SECRET,
-        scopes=data.get("scopes", SCOPES),
-    )
-
-    if creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-            _save_token(creds.to_json())
-        except Exception:
-            return None
-
-    return creds if creds.valid else None
-
-
-def get_gspread_sheet():
-    """Get gspread worksheet using OAuth credentials."""
-    import gspread
-
-    creds = get_google_creds()
-    if not creds:
-        raise RuntimeError("NOT_AUTHED")
-
-    gc = gspread.authorize(creds)
-    return gc.open_by_key(SHEET_ID).get_worksheet(0)
-
-
-# ── Sheet read (public CSV) ───────────────────────────────────────────────────
+# ── Google Sheet helpers ──────────────────────────────────────────────────────
 
 def read_sheet_public() -> list[dict]:
+    """Read sheet via public CSV export."""
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}"
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
@@ -149,6 +71,36 @@ def read_sheet_public() -> list[dict]:
         if email or name:
             rows.append({"id": i + 1, "name": name, "email": email, "title": title})
     return rows
+
+
+def get_gspread_sheet():
+    """Get gspread worksheet using service account or OAuth token."""
+    import gspread
+
+    creds_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if creds_path:
+        from google.oauth2.service_account import Credentials
+        creds = Credentials.from_service_account_file(
+            creds_path,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+    else:
+        # Try token from env (for Render without service account)
+        token_data = os.environ.get("GOOGLE_TOKEN")
+        if not token_data:
+            raise RuntimeError("No Google credentials found. Set GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_TOKEN.")
+        from google.oauth2.credentials import Credentials
+        data = json.loads(token_data)
+        creds = Credentials(
+            token=data.get("token"),
+            refresh_token=data.get("refresh_token"),
+            token_uri=data.get("token_uri", "https://oauth2.googleapis.com/token"),
+            client_id=data.get("client_id"),
+            client_secret=data.get("client_secret"),
+        )
+
+    gc = gspread.authorize(creds)
+    return gc.open_by_key(SHEET_ID).get_worksheet(0)
 
 
 # ── Slack helpers ─────────────────────────────────────────────────────────────
@@ -188,106 +140,30 @@ def send_dm(user_id: str, message: str) -> None:
         raise RuntimeError(result.get("error", "chat.postMessage failed"))
 
 
-# ── OAuth Routes ──────────────────────────────────────────────────────────────
+# ── Auth Routes ───────────────────────────────────────────────────────────────
 
-@app.route("/auth/google")
-def google_auth():
-    """Start Google OAuth flow — simple, no PKCE (avoids session issues on Render)."""
-    from google_auth_oauthlib.flow import Flow
-
-    flow = Flow.from_client_config(
-        get_client_config(),
-        scopes=SCOPES,
-        redirect_uri=REDIRECT_URI,
-    )
-    auth_url, state = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
-    )
-    session["oauth_state"] = state
-    return redirect(auth_url)
+@app.route("/api/auth/login", methods=["POST"])
+def login():
+    data = request.json or {}
+    if data.get("password") == ADMIN_PASSWORD:
+        session["authenticated"] = True
+        session.permanent = True
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Incorrect password"}), 401
 
 
-@app.route("/auth/callback")
-def google_callback():
-    """Handle Google OAuth callback."""
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
-    from google_auth_oauthlib.flow import Flow
-
-    # If already authenticated, skip
-    if get_google_creds():
-        return redirect("/")
-
-    state = request.args.get("state", "")
-    code  = request.args.get("code", "")
-
-    if not code:
-        return redirect("/auth/google")
-
-    try:
-        flow = Flow.from_client_config(
-            get_client_config(),
-            scopes=SCOPES,
-            state=state,
-            redirect_uri=REDIRECT_URI,
-        )
-        flow.fetch_token(authorization_response=request.url)
-        creds = flow.credentials
-        _save_token(creds.to_json())
-        return redirect("/")
-    except Exception as exc:
-        error_msg = str(exc)
-        print(f"OAuth error: {error_msg}")
-        # If invalid_grant, token may already be saved — check
-        if get_google_creds():
-            return redirect("/")
-        return f"""
-        <html><body style="font-family:sans-serif;padding:40px">
-        <h2>⚠️ Google Login Failed</h2>
-        <p>Error: {error_msg}</p>
-        <p>Please <a href="/auth/google">try again</a>.</p>
-        </body></html>
-        """, 400
+@app.route("/api/auth/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/auth/status")
 def auth_status():
-    creds = get_google_creds()
-    return jsonify({"authed": creds is not None})
+    return jsonify({"authed": is_authenticated()})
 
 
-@app.route("/auth/logout")
-def google_logout():
-    if TOKEN_FILE.exists():
-        TOKEN_FILE.unlink()
-    # Also clear env token hint
-    os.environ.pop("GOOGLE_TOKEN", None)
-    return redirect("/")
-
-
-@app.route("/api/token/export")
-def export_token():
-    """
-    Returns current token JSON — copy this value and set as
-    GOOGLE_TOKEN env var on Render dashboard to persist login.
-    """
-    if TOKEN_FILE.exists():
-        token_data = TOKEN_FILE.read_text()
-        return jsonify({
-            "ok": True,
-            "instruction": "Copy 'GOOGLE_TOKEN' value below and paste it in Render → Environment → GOOGLE_TOKEN",
-            "GOOGLE_TOKEN": token_data,
-        })
-    env_token = os.environ.get("GOOGLE_TOKEN")
-    if env_token:
-        return jsonify({
-            "ok": True,
-            "instruction": "Token is already set via env var",
-            "GOOGLE_TOKEN": env_token,
-        })
-    return jsonify({"ok": False, "error": "Not authenticated yet. Login with Google first."}), 401
+# ── API Routes ────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -304,21 +180,19 @@ def get_mentors():
 
 
 @app.route("/api/mentors", methods=["POST"])
+@require_auth
 def add_mentor():
     try:
         data = request.json
         sheet = get_gspread_sheet()
         sheet.append_row([data.get("name", ""), data.get("email", ""), data.get("title", "")])
         return jsonify({"ok": True, "message": "Manager added"})
-    except RuntimeError as e:
-        if "NOT_AUTHED" in str(e):
-            return jsonify({"ok": False, "error": "NOT_AUTHED"}), 401
-        return jsonify({"ok": False, "error": str(e)}), 500
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/mentors/<int:row_id>", methods=["PUT"])
+@require_auth
 def update_mentor(row_id):
     try:
         data = request.json
@@ -330,25 +204,18 @@ def update_mentor(row_id):
             data.get("title", ""),
         ]])
         return jsonify({"ok": True, "message": "Manager updated"})
-    except RuntimeError as e:
-        if "NOT_AUTHED" in str(e):
-            return jsonify({"ok": False, "error": "NOT_AUTHED"}), 401
-        return jsonify({"ok": False, "error": str(e)}), 500
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/mentors/<int:row_id>", methods=["DELETE"])
+@require_auth
 def delete_mentor(row_id):
     try:
         sheet = get_gspread_sheet()
         sheet_row = row_id + 1
         sheet.delete_rows(sheet_row)
         return jsonify({"ok": True, "message": "Manager deleted"})
-    except RuntimeError as e:
-        if "NOT_AUTHED" in str(e):
-            return jsonify({"ok": False, "error": "NOT_AUTHED"}), 401
-        return jsonify({"ok": False, "error": str(e)}), 500
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 
@@ -406,5 +273,4 @@ def send_notifications():
 
 
 if __name__ == "__main__":
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
     app.run(debug=True, port=5000, host="127.0.0.1")
