@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
 """
-Flask backend for Mentor Notification UI.
-- Read sheet: public CSV (no auth)
+Flask backend for Manager Notification UI.
+- Read sheet : public CSV (no auth)
 - Write sheet: Google OAuth 2.0 (browser login once, token saved)
-- Send DMs: Slack user token
+- Send DMs   : Slack user token
+- Deploy     : Render.com ready (credentials via env vars)
 """
 
 from __future__ import annotations
 
+import base64
 import csv
+import hashlib
 import io
 import json
 import os
+import secrets
 import time
 from pathlib import Path
 from typing import Any
 
 import requests
-from flask import Flask, jsonify, redirect, request, send_from_directory, session, url_for
+from flask import Flask, jsonify, redirect, request, send_from_directory, session
 
 try:
     from dotenv import load_dotenv
@@ -26,17 +30,19 @@ except ImportError:
     pass
 
 app = Flask(__name__, static_folder="static")
-app.secret_key = os.urandom(24)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SHEET_ID         = os.environ.get("GOOGLE_SHEET_ID", "1sXvJ_FS_2Wz--CZin3rcXFCIQaE_-24pvX0NzTYrDVc")
-SHEET_GID        = os.environ.get("SHEET_GID", "0")
-USER_TOKEN       = os.environ.get("USER_TOKEN", "")
-SUMMARY_CHANNEL  = os.environ.get("SUMMARY_CHANNEL_ID", "C0BBY7CJRMY")
-OAUTH_CLIENT_JSON = os.environ.get("GOOGLE_OAUTH_CLIENT_JSON", "google-oauth-client.json")
-TOKEN_FILE       = Path(__file__).resolve().parent / "token.json"
+SHEET_ID        = os.environ.get("GOOGLE_SHEET_ID", "1sXvJ_FS_2Wz--CZin3rcXFCIQaE_-24pvX0NzTYrDVc")
+SHEET_GID       = os.environ.get("SHEET_GID", "0")
+USER_TOKEN      = os.environ.get("USER_TOKEN", "")
+SUMMARY_CHANNEL = os.environ.get("SUMMARY_CHANNEL_ID", "C0BBY7CJRMY")
+CLIENT_ID       = os.environ.get("GOOGLE_CLIENT_ID", "")
+CLIENT_SECRET   = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+BASE_URL        = os.environ.get("BASE_URL", "http://127.0.0.1:5000")
+REDIRECT_URI    = f"{BASE_URL}/auth/callback"
 
-REDIRECT_URI = "http://127.0.0.1:5000/auth/callback"
+TOKEN_FILE = Path(__file__).resolve().parent / "token.json"
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -44,24 +50,74 @@ SCOPES = [
 ]
 
 
+# ── Google client config (built from env vars) ────────────────────────────────
+
+def get_client_config() -> dict:
+    """Build OAuth client config from env vars (no JSON file needed in prod)."""
+    return {
+        "web": {
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "project_id": os.environ.get("GOOGLE_PROJECT_ID", ""),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "redirect_uris": [REDIRECT_URI],
+        }
+    }
+
+
 # ── Google Auth helpers ───────────────────────────────────────────────────────
 
+def _token_data() -> dict | None:
+    """Read token from file (local) or env var GOOGLE_TOKEN (production)."""
+    # Production: token stored in env var
+    token_env = os.environ.get("GOOGLE_TOKEN")
+    if token_env:
+        try:
+            return json.loads(token_env)
+        except Exception:
+            return None
+    # Local: token stored in file
+    if TOKEN_FILE.exists():
+        try:
+            return json.loads(TOKEN_FILE.read_text())
+        except Exception:
+            return None
+    return None
+
+
+def _save_token(creds_json: str) -> None:
+    """Save token to file locally (on Render, use env var instead)."""
+    TOKEN_FILE.write_text(creds_json)
+
+
 def get_google_creds():
-    """Return valid Google credentials, or None if not authed yet."""
+    """Return valid Google credentials, or None if not authed."""
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
 
-    if not TOKEN_FILE.exists():
+    data = _token_data()
+    if not data:
         return None
 
-    creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
-    if creds and creds.expired and creds.refresh_token:
+    creds = Credentials(
+        token=data.get("token"),
+        refresh_token=data.get("refresh_token"),
+        token_uri=data.get("token_uri", "https://oauth2.googleapis.com/token"),
+        client_id=data.get("client_id") or CLIENT_ID,
+        client_secret=data.get("client_secret") or CLIENT_SECRET,
+        scopes=data.get("scopes", SCOPES),
+    )
+
+    if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            TOKEN_FILE.write_text(creds.to_json())
+            _save_token(creds.to_json())
         except Exception:
             return None
-    return creds if creds and creds.valid else None
+
+    return creds if creds.valid else None
 
 
 def get_gspread_sheet():
@@ -89,7 +145,7 @@ def read_sheet_public() -> list[dict]:
         row = {k.strip().lower(): v.strip() for k, v in raw.items() if k}
         title = row.get("titile") or row.get("title") or ""
         email = row.get("email") or ""
-        name  = row.get("mentor name") or ""
+        name  = row.get("mentor name") or row.get("manager name") or ""
         if email or name:
             rows.append({"id": i + 1, "name": name, "email": email, "title": title})
     return rows
@@ -137,11 +193,8 @@ def send_dm(user_id: str, message: str) -> None:
 @app.route("/auth/google")
 def google_auth():
     """Start Google OAuth flow with PKCE."""
-    import hashlib, base64, secrets
-
     from google_auth_oauthlib.flow import Flow
 
-    # Generate PKCE code verifier and challenge
     code_verifier = secrets.token_urlsafe(64)
     code_challenge = base64.urlsafe_b64encode(
         hashlib.sha256(code_verifier.encode()).digest()
@@ -149,8 +202,8 @@ def google_auth():
 
     session["code_verifier"] = code_verifier
 
-    flow = Flow.from_client_secrets_file(
-        OAUTH_CLIENT_JSON,
+    flow = Flow.from_client_config(
+        get_client_config(),
         scopes=SCOPES,
         redirect_uri=REDIRECT_URI,
     )
@@ -168,29 +221,28 @@ def google_auth():
 @app.route("/auth/callback")
 def google_callback():
     """Handle Google OAuth callback with PKCE."""
-    import os as _os
-    _os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
     from google_auth_oauthlib.flow import Flow
 
-    flow = Flow.from_client_secrets_file(
-        OAUTH_CLIENT_JSON,
+    flow = Flow.from_client_config(
+        get_client_config(),
         scopes=SCOPES,
         state=session.get("oauth_state"),
         redirect_uri=REDIRECT_URI,
     )
 
     auth_response = request.url
+    # Fix localhost vs 127.0.0.1 mismatch
     if "localhost" in auth_response:
         auth_response = auth_response.replace("localhost", "127.0.0.1", 1)
 
-    # Pass code_verifier for PKCE
     flow.fetch_token(
         authorization_response=auth_response,
         code_verifier=session.get("code_verifier"),
     )
     creds = flow.credentials
-    TOKEN_FILE.write_text(creds.to_json())
+    _save_token(creds.to_json())
     return redirect("/")
 
 
@@ -202,9 +254,10 @@ def auth_status():
 
 @app.route("/auth/logout")
 def google_logout():
-    """Remove saved token — user will need to re-auth for write operations."""
     if TOKEN_FILE.exists():
         TOKEN_FILE.unlink()
+    # Also clear env token hint
+    os.environ.pop("GOOGLE_TOKEN", None)
     return redirect("/")
 
 
@@ -230,7 +283,7 @@ def add_mentor():
         data = request.json
         sheet = get_gspread_sheet()
         sheet.append_row([data.get("name", ""), data.get("email", ""), data.get("title", "")])
-        return jsonify({"ok": True, "message": "Mentor added"})
+        return jsonify({"ok": True, "message": "Manager added"})
     except RuntimeError as e:
         if "NOT_AUTHED" in str(e):
             return jsonify({"ok": False, "error": "NOT_AUTHED"}), 401
@@ -250,7 +303,7 @@ def update_mentor(row_id):
             data.get("email", ""),
             data.get("title", ""),
         ]])
-        return jsonify({"ok": True, "message": "Mentor updated"})
+        return jsonify({"ok": True, "message": "Manager updated"})
     except RuntimeError as e:
         if "NOT_AUTHED" in str(e):
             return jsonify({"ok": False, "error": "NOT_AUTHED"}), 401
@@ -265,7 +318,7 @@ def delete_mentor(row_id):
         sheet = get_gspread_sheet()
         sheet_row = row_id + 1
         sheet.delete_rows(sheet_row)
-        return jsonify({"ok": True, "message": "Mentor deleted"})
+        return jsonify({"ok": True, "message": "Manager deleted"})
     except RuntimeError as e:
         if "NOT_AUTHED" in str(e):
             return jsonify({"ok": False, "error": "NOT_AUTHED"}), 401
@@ -315,7 +368,7 @@ def send_notifications():
             failed.append(f"{name} ({email}): {exc}")
 
     try:
-        summary = f"*📢 Weekly Mentor Notifications*\n✅ Sent: {sent}\n⏭️ Skipped: {skipped}"
+        summary = f"*📢 Weekly Manager Notifications*\n✅ Sent: {sent}\n⏭️ Skipped: {skipped}"
         if failed:
             summary += "\n❌ Failed:\n• " + "\n• ".join(failed)
         slack_post("chat.postMessage", channel=SUMMARY_CHANNEL, text=summary, as_user=True)
@@ -327,6 +380,5 @@ def send_notifications():
 
 
 if __name__ == "__main__":
-    import os as _os
-    _os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
     app.run(debug=True, port=5000, host="127.0.0.1")

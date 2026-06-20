@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: manager-notification-system
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: USER_TOKEN
+        sync: false
+      - key: SUMMARY_CHANNEL_ID
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: BASE_URL
+        sync: false
+      - key: GOOGLE_TOKEN
+        sync: false
