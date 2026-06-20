@@ -211,13 +211,17 @@ def google_auth():
 
 @app.route("/auth/callback")
 def google_callback():
-    """Handle Google OAuth callback — skip state check to avoid session issues."""
+    """Handle Google OAuth callback."""
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
     from google_auth_oauthlib.flow import Flow
 
-    # Use state from the callback URL directly (not session) to avoid mismatch
     state = request.args.get("state", "")
+
+    # Debug: log what URLs we're working with
+    actual_url = request.url
+    print(f"DEBUG callback - request.url: {actual_url}")
+    print(f"DEBUG REDIRECT_URI: {REDIRECT_URI}")
 
     flow = Flow.from_client_config(
         get_client_config(),
@@ -226,9 +230,14 @@ def google_callback():
         redirect_uri=REDIRECT_URI,
     )
 
-    auth_response = request.url
-    if "localhost" in auth_response:
+    # Force https if Render (production)
+    auth_response = actual_url
+    if "onrender.com" in REDIRECT_URI and auth_response.startswith("http://"):
+        auth_response = auth_response.replace("http://", "https://", 1)
+    elif "localhost" in auth_response:
         auth_response = auth_response.replace("localhost", "127.0.0.1", 1)
+
+    print(f"DEBUG auth_response: {auth_response}")
 
     flow.fetch_token(authorization_response=auth_response)
     creds = flow.credentials
