@@ -312,18 +312,19 @@ def save_schedules(schedules: list[dict]) -> None:
 
 def _sync_to_render(schedules: list[dict]) -> None:
     """Sync schedules to Render environment variable so they survive redeploy."""
-    render_api_key   = os.environ.get("RENDER_API_KEY")
+    render_api_key    = os.environ.get("RENDER_API_KEY")
     render_service_id = os.environ.get("RENDER_SERVICE_ID")
     if not render_api_key or not render_service_id:
         return  # Not configured — skip silently
     try:
+        # Use PATCH on specific env var key — does NOT touch other env vars
         requests.put(
-            f"https://api.render.com/v1/services/{render_service_id}/env-vars",
+            f"https://api.render.com/v1/services/{render_service_id}/env-vars/SCHEDULES_DATA",
             headers={
                 "Authorization": f"Bearer {render_api_key}",
                 "Content-Type": "application/json",
             },
-            json=[{"key": "SCHEDULES_DATA", "value": json.dumps(schedules)}],
+            json={"value": json.dumps(schedules)},
             timeout=10,
         )
     except Exception as exc:
