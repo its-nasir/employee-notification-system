@@ -480,6 +480,71 @@
     </div>
   </div>
 
+  <!-- Schedule Notifications Card -->
+  <div class="card">
+    <div class="card-header">
+      <h2>📅 Schedule Notifications</h2>
+    </div>
+
+    <!-- Add Schedule Form -->
+    <div style="background:#f8f8fb; border-radius:10px; padding:20px; margin-bottom:20px;">
+      <div style="display:flex; gap:20px; margin-bottom:16px; flex-wrap:wrap;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;">
+          <input type="radio" name="sched-type" value="weekly" checked onchange="toggleScheduleType()"> Weekly Recurring
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;">
+          <input type="radio" name="sched-type" value="onetime" onchange="toggleScheduleType()"> One-time Date
+        </label>
+      </div>
+
+      <!-- Weekly options -->
+      <div id="sched-weekly" style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+        <div>
+          <label style="font-size:12px;color:#666;display:block;margin-bottom:4px;">Day of Week</label>
+          <select id="sched-day" style="padding:8px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;">
+            <option value="0">Monday</option>
+            <option value="1">Tuesday</option>
+            <option value="2">Wednesday</option>
+            <option value="3">Thursday</option>
+            <option value="4">Friday</option>
+            <option value="5">Saturday</option>
+            <option value="6">Sunday</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:#666;display:block;margin-bottom:4px;">Time</label>
+          <input type="time" id="sched-time-weekly" value="09:00" style="padding:8px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;" />
+        </div>
+      </div>
+
+      <!-- One-time options -->
+      <div id="sched-onetime" style="display:none; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+        <div>
+          <label style="font-size:12px;color:#666;display:block;margin-bottom:4px;">Date</label>
+          <input type="date" id="sched-date" style="padding:8px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;" />
+        </div>
+        <div>
+          <label style="font-size:12px;color:#666;display:block;margin-bottom:4px;">Time</label>
+          <input type="time" id="sched-time-onetime" value="09:00" style="padding:8px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;" />
+        </div>
+      </div>
+
+      <div style="margin-top:14px;">
+        <label style="font-size:12px;color:#666;display:block;margin-bottom:4px;">Label (optional)</label>
+        <input type="text" id="sched-label" placeholder="e.g. Weekly Monday reminder" style="padding:8px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;width:100%;max-width:340px;" />
+      </div>
+
+      <button class="btn-primary" id="sched-add-btn" onclick="addSchedule()" style="margin-top:16px;" disabled>
+        + Add Schedule
+      </button>
+    </div>
+
+    <!-- Active Schedules List -->
+    <div id="schedules-list">
+      <div style="color:#999; font-size:14px; text-align:center; padding:20px;">Loading schedules...</div>
+    </div>
+  </div>
+
 </div>
 
 <!-- Password Modal -->
@@ -739,10 +804,131 @@
     const data = await res.json();
     updateAuthBanner(data.authed);
     loadMentors();
+    loadSchedules();
   }
 
   init();
 
+  // ── Schedule ─────────────────────────────────────────────────────────────────
+  const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+
+  function toggleScheduleType() {
+    const type = document.querySelector('input[name="sched-type"]:checked').value;
+    document.getElementById('sched-weekly').style.display  = type === 'weekly'  ? 'flex' : 'none';
+    document.getElementById('sched-onetime').style.display = type === 'onetime' ? 'flex' : 'none';
+  }
+
+  async function loadSchedules() {
+    const el = document.getElementById('schedules-list');
+    try {
+      const res  = await fetch('/api/schedules');
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+
+      if (!data.schedules.length) {
+        el.innerHTML = '<div style="color:#999;font-size:14px;text-align:center;padding:20px;">No schedules yet. Add one above.</div>';
+        return;
+      }
+
+      el.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">
+          <thead>
+            <tr style="background:#f8f8fb;">
+              <th style="padding:10px 14px;text-align:left;color:#666;font-size:12px;text-transform:uppercase;border-bottom:2px solid #eee;">Type</th>
+              <th style="padding:10px 14px;text-align:left;color:#666;font-size:12px;text-transform:uppercase;border-bottom:2px solid #eee;">Schedule</th>
+              <th style="padding:10px 14px;text-align:left;color:#666;font-size:12px;text-transform:uppercase;border-bottom:2px solid #eee;">Label</th>
+              <th style="padding:10px 14px;text-align:left;color:#666;font-size:12px;text-transform:uppercase;border-bottom:2px solid #eee;">Next Run</th>
+              <th style="padding:10px 14px;text-align:left;color:#666;font-size:12px;text-transform:uppercase;border-bottom:2px solid #eee;">Last Sent</th>
+              <th style="padding:10px 14px;text-align:left;color:#666;font-size:12px;text-transform:uppercase;border-bottom:2px solid #eee;">Status</th>
+              <th style="padding:10px 14px;border-bottom:2px solid #eee;"></th>            </tr>
+          </thead>
+          <tbody>
+            ${data.schedules.map(s => {
+              const schedStr = s.type === 'weekly'
+                ? `Every ${DAYS[s.day_of_week]} at ${String(s.hour).padStart(2,'0')}:${String(s.minute).padStart(2,'0')}`
+                : new Date(s.run_at).toLocaleString();
+              const nextRun = s.next_run ? new Date(s.next_run).toLocaleString() : '—';
+              const lastRun = s.last_run
+                ? `<span style="color:#2eb67d;">✅ ${new Date(s.last_run).toLocaleString()}</span>`
+                : '<span style="color:#999;">Not sent yet</span>';
+              const statusBadge = s.status === 'done'
+                ? '<span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:12px;font-size:12px;">✅ Done</span>'
+                : '<span style="background:#e3f2fd;color:#1565c0;padding:2px 8px;border-radius:12px;font-size:12px;">🔵 Active</span>';
+              return `
+                <tr style="border-bottom:1px solid #f0f0f0;">
+                  <td style="padding:12px 14px;">${s.type === 'weekly' ? '🔁 Weekly' : '📅 One-time'}</td>
+                  <td style="padding:12px 14px;">${schedStr}</td>
+                  <td style="padding:12px 14px;color:#666;">${esc(s.label) || '—'}</td>
+                  <td style="padding:12px 14px;color:#666;font-size:13px;">${nextRun}</td>
+                  <td style="padding:12px 14px;font-size:13px;">${lastRun}</td>
+                  <td style="padding:12px 14px;">${statusBadge}</td>
+                  <td style="padding:12px 14px;">
+                    <button class="btn-danger btn-sm" onclick="deleteSchedule('${s.id}')" ${!isAuthed ? 'disabled' : ''}>🗑️ Delete</button>
+                  </td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>`;
+    } catch(e) {
+      el.innerHTML = `<div style="color:#e01e5a;font-size:14px;text-align:center;padding:20px;">Error: ${e.message}</div>`;
+    }
+  }
+
+  async function addSchedule() {
+    const type = document.querySelector('input[name="sched-type"]:checked').value;
+    const label = document.getElementById('sched-label').value.trim();
+    const btn = document.getElementById('sched-add-btn');
+
+    let payload = { type, label };
+
+    if (type === 'weekly') {
+      const [hour, minute] = document.getElementById('sched-time-weekly').value.split(':');
+      payload.day_of_week = parseInt(document.getElementById('sched-day').value);
+      payload.hour = parseInt(hour);
+      payload.minute = parseInt(minute);
+    } else {
+      const date = document.getElementById('sched-date').value;
+      const time = document.getElementById('sched-time-onetime').value;
+      if (!date) { showToast('Please select a date', 'error'); return; }
+      payload.run_at = `${date}T${time}:00`;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Adding...';
+
+    try {
+      const res  = await fetch('/api/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      showToast('Schedule added ✅', 'success');
+      document.getElementById('sched-label').value = '';
+      loadSchedules();
+    } catch(e) {
+      showToast('Error: ' + e.message, 'error');
+    } finally {
+      btn.disabled = !isAuthed;
+      btn.textContent = '+ Add Schedule';
+    }
+  }
+
+  async function deleteSchedule(sid) {
+    if (!confirm('Delete this schedule?')) return;
+    try {
+      const res  = await fetch(`/api/schedules/${sid}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      showToast('Schedule deleted', 'success');
+      loadSchedules();
+    } catch(e) {
+      showToast('Error: ' + e.message, 'error');
+    }
+  }
+
+  // ── end of script
   // ── Auth ────────────────────────────────────────────────────────────────────
   function openPasswordModal() {
     document.getElementById('pw-overlay').classList.add('active');
@@ -803,6 +989,9 @@
     // Update Send DMs button
     const sendBtn = document.getElementById('send-btn');
     if (sendBtn) sendBtn.disabled = !authed;
+    // Update Schedule Add button
+    const schedBtn = document.getElementById('sched-add-btn');
+    if (schedBtn) schedBtn.disabled = !authed;
     // Re-render table to update Edit/Delete buttons
     renderTable();
     const banner = document.getElementById('auth-banner');

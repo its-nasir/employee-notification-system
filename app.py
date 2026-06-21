@@ -14,11 +14,16 @@ import io
 import json
 import os
 import time
+from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from flask import Flask, jsonify, redirect, request, send_from_directory, session
 
 try:
@@ -36,6 +41,12 @@ SHEET_GID       = os.environ.get("SHEET_GID", "0")
 USER_TOKEN      = os.environ.get("USER_TOKEN", "")
 SUMMARY_CHANNEL = os.environ.get("SUMMARY_CHANNEL_ID", "C0BBY7CJRMY")
 ADMIN_PASSWORD  = os.environ.get("ADMIN_PASSWORD", "admin123")
+TIMEZONE        = os.environ.get("TIMEZONE", "Asia/Kolkata")
+SCHEDULES_FILE  = Path(__file__).resolve().parent / "schedules.json"
+
+# ── APScheduler setup ─────────────────────────────────────────────────────────
+scheduler = BackgroundScheduler(timezone=TIMEZONE)
+scheduler.start()
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -270,6 +281,212 @@ def send_notifications():
         log(f"⚠️ Summary post failed: {exc}", "warning")
 
     return jsonify({"ok": True, "sent": sent, "skipped": skipped, "failed": failed, "logs": logs})
+
+
+# ── Schedule helpers ──────────────────────────────────────────────────────────
+
+def load_schedules() -> list[dict]:
+    # Priority: local file → env var SCHEDULES_DATA
+    if SCHEDULES_FILE.exists():
+        try:
+            return json.loads(SCHEDULES_FILE.read_text())
+        except Exception:
+            pass
+    env_data = os.environ.get("SCHEDULES_DATA")
+    if env_data:
+        try:
+            return json.loads(env_data)
+        except Exception:
+            pass
+    return []
+
+
+def save_schedules(schedules: list[dict]) -> None:
+    # Save to local file
+    SCHEDULES_FILE.write_text(json.dumps(schedules, indent=2))
+    # Also update env var in memory (so reload works after file loss)
+    os.environ["SCHEDULES_DATA"] = json.dumps(schedules)
+    # Try to update Render env var via API if available
+    _sync_to_render(schedules)
+
+
+def _sync_to_render(schedules: list[dict]) -> None:
+    """Sync schedules to Render environment variable so they survive redeploy."""
+    render_api_key   = os.environ.get("RENDER_API_KEY")
+    render_service_id = os.environ.get("RENDER_SERVICE_ID")
+    if not render_api_key or not render_service_id:
+        return  # Not configured — skip silently
+    try:
+        requests.put(
+            f"https://api.render.com/v1/services/{render_service_id}/env-vars",
+            headers={
+                "Authorization": f"Bearer {render_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=[{"key": "SCHEDULES_DATA", "value": json.dumps(schedules)}],
+            timeout=10,
+        )
+    except Exception as exc:
+        print(f"[Scheduler] Render sync failed (non-critical): {exc}")
+
+
+def run_scheduled_send(schedule_id: str) -> None:
+    """Called by APScheduler to send DMs."""
+    print(f"[Scheduler] Running schedule: {schedule_id}")
+    schedules = load_schedules()
+
+    # Mark as last_run
+    for s in schedules:
+        if s["id"] == schedule_id:
+            s["last_run"] = datetime.now(ZoneInfo(TIMEZONE)).isoformat()
+            # If one-time, mark as done
+            if s["type"] == "onetime":
+                s["status"] = "done"
+    save_schedules(schedules)
+
+    # Send notifications (reuse existing logic)
+    try:
+        mentors = read_sheet_public()
+        sent = skipped = 0
+        failed = []
+        for mentor in mentors:
+            name  = mentor["name"] or mentor["email"]
+            email = mentor["email"]
+            title = mentor["title"]
+            if not email:
+                continue
+            if not title:
+                skipped += 1
+                continue
+            try:
+                user_id = lookup_user_by_email(email)
+                send_dm(user_id, title)
+                sent += 1
+                time.sleep(1.0)
+            except Exception as exc:
+                failed.append(f"{name} ({email}): {exc}")
+
+        summary = f"*📢 Scheduled Manager Notifications*\n✅ Sent: {sent}\n⏭️ Skipped: {skipped}"
+        if failed:
+            summary += "\n❌ Failed:\n• " + "\n• ".join(failed)
+        slack_post("chat.postMessage", channel=SUMMARY_CHANNEL, text=summary, as_user=True)
+        print(f"[Scheduler] Done — sent: {sent}, skipped: {skipped}, failed: {len(failed)}")
+    except Exception as exc:
+        print(f"[Scheduler] Error: {exc}")
+
+
+def register_schedule(s: dict) -> None:
+    """Add a job to APScheduler from a schedule dict."""
+    try:
+        if s.get("status") == "done":
+            return
+        sid = s["id"]
+        tz  = ZoneInfo(TIMEZONE)
+
+        if s["type"] == "weekly":
+            # day_of_week: 0=Monday ... 6=Sunday
+            trigger = CronTrigger(
+                day_of_week=int(s["day_of_week"]),
+                hour=int(s["hour"]),
+                minute=int(s["minute"]),
+                timezone=tz,
+            )
+        else:  # onetime
+            run_dt = datetime.fromisoformat(s["run_at"])
+            if run_dt < datetime.now(tz):
+                return  # past — skip
+            trigger = DateTrigger(run_date=run_dt, timezone=tz)
+
+        scheduler.add_job(
+            run_scheduled_send,
+            trigger=trigger,
+            id=sid,
+            args=[sid],
+            replace_existing=True,
+        )
+        print(f"[Scheduler] Registered job: {sid}")
+    except Exception as exc:
+        print(f"[Scheduler] Failed to register {s.get('id')}: {exc}")
+
+
+def reload_all_schedules() -> None:
+    """Load all saved schedules into APScheduler."""
+    for s in load_schedules():
+        register_schedule(s)
+
+
+# Load schedules on startup
+reload_all_schedules()
+
+
+# ── Schedule API Routes ───────────────────────────────────────────────────────
+
+@app.route("/api/schedules", methods=["GET"])
+def get_schedules():
+    schedules = load_schedules()
+    # Attach next_run from APScheduler
+    for s in schedules:
+        job = scheduler.get_job(s["id"])
+        s["next_run"] = job.next_run_time.isoformat() if job and job.next_run_time else None
+    return jsonify({"ok": True, "schedules": schedules})
+
+
+@app.route("/api/schedules", methods=["POST"])
+@require_auth
+def add_schedule():
+    try:
+        data   = request.json
+        stype  = data.get("type")  # "weekly" or "onetime"
+        import uuid
+        sid    = str(uuid.uuid4())[:8]
+        tz     = ZoneInfo(TIMEZONE)
+
+        if stype == "weekly":
+            day    = int(data["day_of_week"])   # 0=Mon, 6=Sun
+            hour   = int(data["hour"])
+            minute = int(data["minute"])
+            label  = data.get("label", "")
+            s = {
+                "id": sid, "type": "weekly",
+                "day_of_week": day, "hour": hour, "minute": minute,
+                "label": label, "status": "active", "last_run": None,
+            }
+        elif stype == "onetime":
+            run_at = data["run_at"]   # ISO format: 2026-06-28T10:00:00
+            label  = data.get("label", "")
+            # Make timezone-aware
+            dt = datetime.fromisoformat(run_at).replace(tzinfo=tz)
+            s = {
+                "id": sid, "type": "onetime",
+                "run_at": dt.isoformat(), "label": label,
+                "status": "active", "last_run": None,
+            }
+        else:
+            return jsonify({"ok": False, "error": "Invalid type"}), 400
+
+        schedules = load_schedules()
+        schedules.append(s)
+        save_schedules(schedules)
+        register_schedule(s)
+
+        return jsonify({"ok": True, "schedule": s})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/schedules/<sid>", methods=["DELETE"])
+@require_auth
+def delete_schedule(sid):
+    try:
+        schedules = [s for s in load_schedules() if s["id"] != sid]
+        save_schedules(schedules)
+        try:
+            scheduler.remove_job(sid)
+        except Exception:
+            pass
+        return jsonify({"ok": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 if __name__ == "__main__":
