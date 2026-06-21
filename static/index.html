@@ -426,7 +426,7 @@
       <h2>📋 Managers</h2>
       <div class="actions">
         <button class="btn-secondary" onclick="loadMentors()">🔄 Refresh</button>
-        <button class="btn-primary" onclick="openAddModal()">+ Add Manager</button>
+        <button class="btn-primary" id="add-btn" onclick="openAddModal()" disabled>+ Add Manager</button>
       </div>
     </div>
 
@@ -523,6 +523,7 @@
 <script>
   let mentors = [];
   let editingId = null;
+  let isAuthed = false;
 
   // ── Load mentors ────────────────────────────────────────────────────────────
   async function loadMentors() {
@@ -556,8 +557,8 @@
         <td style="max-width:280px; color:#555">${esc(m.title) || '<span style="color:#bbb">No message</span>'}</td>
         <td>
           <div style="display:flex; gap:6px;">
-            <button class="btn-warning btn-sm" onclick="openEditModal(${m.id})">✏️ Edit</button>
-            <button class="btn-danger btn-sm" onclick="deleteMentor(${m.id}, '${esc(m.name)}')">🗑️ Delete</button>
+            <button class="btn-warning btn-sm" onclick="openEditModal(${m.id})" ${!isAuthed ? 'disabled title="Enter password to edit"' : ''}>✏️ Edit</button>
+            <button class="btn-danger btn-sm" onclick="deleteMentor(${m.id}, '${esc(m.name)}')" ${!isAuthed ? 'disabled title="Enter password to delete"' : ''}>🗑️ Delete</button>
           </div>
         </td>
       </tr>
@@ -795,6 +796,12 @@
   }
 
   function updateAuthBanner(authed) {
+    isAuthed = authed;
+    // Update Add button
+    const addBtn = document.getElementById('add-btn');
+    if (addBtn) addBtn.disabled = !authed;
+    // Re-render table to update Edit/Delete buttons
+    renderTable();
     const banner = document.getElementById('auth-banner');
     if (authed) {
       banner.classList.add('auth-ok');
