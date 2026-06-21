@@ -422,6 +422,13 @@ reload_all_schedules()
 
 # ── Schedule API Routes ───────────────────────────────────────────────────────
 
+@app.route("/api/schedule/test", methods=["POST"])
+def test_schedule():
+    """Manually trigger scheduled send — for testing."""
+    run_scheduled_send("manual-test")
+    return jsonify({"ok": True, "message": "Test send triggered"})
+
+
 @app.route("/api/schedules", methods=["GET"])
 def get_schedules():
     schedules = load_schedules()
