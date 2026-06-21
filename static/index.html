@@ -462,7 +462,7 @@
     </div>
 
     <div class="send-section" style="margin-bottom: 20px;">
-      <button class="btn-send" id="send-btn" onclick="sendNotifications()">
+      <button class="btn-send" id="send-btn" onclick="sendNotifications()" disabled>
         <span>📤</span> Send DMs to All Managers
       </button>
       <div class="stats-bar" id="stats-bar" style="display:none;">
@@ -800,6 +800,9 @@
     // Update Add button
     const addBtn = document.getElementById('add-btn');
     if (addBtn) addBtn.disabled = !authed;
+    // Update Send DMs button
+    const sendBtn = document.getElementById('send-btn');
+    if (sendBtn) sendBtn.disabled = !authed;
     // Re-render table to update Edit/Delete buttons
     renderTable();
     const banner = document.getElementById('auth-banner');
