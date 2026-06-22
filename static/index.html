@@ -992,6 +992,12 @@
     // Update Schedule Add button
     const schedBtn = document.getElementById('sched-add-btn');
     if (schedBtn) schedBtn.disabled = !authed;
+    // Disable/enable schedule inputs
+    ['sched-day','sched-time-weekly','sched-time-onetime','sched-date','sched-label'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !authed;
+    });
+    document.querySelectorAll('input[name="sched-type"]').forEach(el => el.disabled = !authed);
     // Re-render table to update Edit/Delete buttons
     renderTable();
     const banner = document.getElementById('auth-banner');
